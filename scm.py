@@ -4,6 +4,13 @@ A Little Scheme in Python 2.7/3.8, v3.2 H31.01.13/R02.04.09 by SUZUKI Hisao
 """
 from __future__ import print_function
 from sys import argv, exit
+import pprint
+from pydantic import BaseModel
+
+from typing import Callable
+from pydantic import  validator, ValidationError
+
+#arbitrary_types_allowed=True
 try:
     from sys import intern      # for Python 3
     raw_input = input           # for Python 3
@@ -11,7 +18,11 @@ try:
 except ImportError:
     pass
 
-class List (object):
+
+
+FunctionPointer = Callable[..., None]
+
+class List (BaseModel):
     "Empty list"
     __slots__ = ()
 
@@ -28,10 +39,16 @@ NIL = List()
 
 class Cell (List):
     "Cons cell"
-    __slots__ = ('car', 'cdr')
+    #__slots__ = ('car', 'cdr')
+    car: any
+    cdr: any
+    class Config:
+        arbitrary_types_allowed=True
 
     def __init__(self, car, cdr):
-        self.car, self.cdr = car, cdr
+        #self.car, self.cdr = car, cdr
+        super().__init__(car=car,
+                         cdr=cdr)
 
     def __iter__(self):
         "Yield car, cadr, caddr and so on."
@@ -50,6 +67,8 @@ IF = intern('if')
 BEGIN = intern('begin')
 LAMBDA = intern('lambda')
 DEFINE = intern('define')
+DEFINE_MACRO = intern('define-macro')
+MES_USE_MODULE = intern('mes-use-module')
 SETQ = intern('set!')
 APPLY = intern('apply')
 CALLCC = intern('call/cc')
@@ -62,33 +81,50 @@ EVAL_ARG = intern('eval-arg')
 CONS_ARGS = intern('cons-args')
 RESTORE_ENV = intern('restore-env')
 
-class ApplyClass:
+class ApplyClass(BaseModel):
     def __str__(self):
         return '#<apply>'
 
-class CallCcClass:
+class CallCcClass(BaseModel):
     def __str__(self):
         return '#<call/cc>'
 
 APPLY_OBJ = ApplyClass()
 CALLCC_OBJ = CallCcClass()
 
-class SchemeString:
+class SchemeString(BaseModel):
     "String in Scheme"
+    string: str
     def __init__(self, string):
-        self.string = string
+        #self.string = string
+        super().__init__(string=string)
+
 
     def __repr__(self):
         return '"' + self.string + '"'
 
-
-class Environment (object):
+
+class Environment (BaseModel):
     "Linked list of bindings mapping symbols to values"
-    __slots__ = ('sym', 'val', 'next')
+    #__slots__ = ('sym', 'val', 'next')
+    class Config:
+        arbitrary_types_allowed=True
+
+    sym: any
+    val: any
+    next: any
 
     def __init__(self, sym, val, next):
         "(env.sym is None) means the env is the frame top. "
-        self.sym, self.val, self.next = sym, val, next
+        #pprint.pprint(dict(name="ENV",
+        #    sym=sym,
+        #    val=val,
+        #    next=next))
+        #self.sym, self.val, self.next = sym, val, next
+        super().__init__(sym=sym,
+                         val=val,
+                         next=next)
+
 
     def __iter__(self):
         "Yield each binding in the linked list."
@@ -116,19 +152,28 @@ class Environment (object):
             return Environment(symbols.car, data.car,
                                self.prepend_defs(symbols.cdr, data.cdr))
 
-class Closure (object):
+class Closure (BaseModel):
     "Lambda expression with its environment"
     __slots__ = ('params', 'body', 'env')
 
     def __init__(self, params, body, env):
-        self.params, self.body, self.env = params, body, env
+        #self.params, self.body, self.env = params, body, env
+        super().__init__(params=params,
+                         env=env,
+                         body=body)
 
-class Intrinsic (object):
+
+class Intrinsic (BaseModel):
     "Built-in function"
-    __slots__ = ('name', 'arity', 'fun')
+    name: str
+    arity: int
+    fun: FunctionPointer
+    #__slots__ = ('name', 'arity', 'fun')
 
     def __init__(self, name, arity, fun):
+        super().__init__(name=name,arity=arity,fun=fun)
         self.name, self.arity, self.fun = name, arity, fun
+
 
     def __repr__(self):
         return '#<%s:%d>' % (self.name, self.arity)
@@ -222,11 +267,13 @@ GLOBAL_ENV = Environment(
 
 
 def evaluate(exp, env=GLOBAL_ENV):
+    #pprint.pprint({"EVAL":exp, "ENV":env})
     "Evaluate an expression in an environment."
     k = NOCONT
     try:
         while True:
             while True:
+                #pprint.pprint({"EVAL1":exp})
                 if isinstance(exp, Cell):
                     kar, kdr = exp.car, exp.cdr
                     if kar is QUOTE: # (quote e)
@@ -241,15 +288,34 @@ def evaluate(exp, env=GLOBAL_ENV):
                     elif kar is LAMBDA: # (lambda (v...) e...)
                         exp = Closure(kdr.car, kdr.cdr, env)
                         break
+                    elif kar is MES_USE_MODULE:
+                        #pprint.pprint({"kar":kar,
+                        #"kdr":kdr})
+                        break
+                        
+                    elif kar is DEFINE_MACRO:
+                        #pprint.pprint({"kar":kar,
+                        #"kdr.cdr.car": kdr.cdr.car,
+                        #"kdr":kdr})
+                        break
                     elif kar is DEFINE: # (define v e)
+                        #pprint.pprint({"kar":kar,
+                        #"kdr.cdr.car": kdr.cdr.car,
+                        #              "kdr":kdr})
                         v = kdr.car
-                        assert isinstance(v, str), v
-                        exp, k = kdr.cdr.car, (DEFINE, v, k)
+                        #assert isinstance(v, str), v
+                        exp = Closure(kdr.cdr.car, kdr.cdr.cdr, env)
+                        #exp, k = kdr.cdr.car, (DEFINE, v, k)
+                        k = (DEFINE, v, k)
+                        
+                        #break
                     elif kar is SETQ: # (set! v e)
                         exp, k = kdr.cdr.car, (SETQ, env.look_for(kdr.car), k)
                     else:
                         exp, k = kar, (APPLY, kdr, k)
                 elif isinstance(exp, str):
+                    #pprint.pprint({"Looking in " : env})
+                    #pprint.pprint({"Looking for " : exp})
                     exp = env.look_for(exp).val
                     break
                 else:           # as a number, #t, #f etc.
@@ -309,11 +375,12 @@ def evaluate(exp, env=GLOBAL_ENV):
                                        (stringify(op), stringify(x)))
     except ErrorException:
         raise
-    except Exception as ex:
-        msg = type(ex).__name__ + ': ' + str(ex)
-        if k is not NOCONT:
-            msg += '\n ' + stringify(k)
-        raise Exception(msg)
+    # except Exception as ex:
+    #     print("ERROR",ex)
+    #     msg = type(ex).__name__ + ': ' + str(ex)
+    #     if k is not NOCONT:
+    #         msg += '\n ' + stringify(k)
+    #     raise Exception(msg)
 
 def apply_function(fun, arg, k, env):
     """Apply a function to arguments with a continuation.
@@ -415,6 +482,7 @@ def load(file_name):
     tokens = split_string_into_tokens(source_string)
     while tokens:
         exp = read_from_tokens(tokens)
+
         evaluate(exp)
 
 TOKENS = []
